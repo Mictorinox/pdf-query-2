@@ -7,14 +7,15 @@ API_CONFIG = {
         "api_key_env_var": "GLM_API_Key",
         "api_base": "https://open.bigmodel.cn/api/paas/v4/",
         "llm_model_name": "glm-4-flash",
-        "llm_provider_type": "zhipuai"
+        "llm_provider_type": "zhipuai",
+        "temperature": 0.1
     },
     # 未来可以添加更多提供商的配置
 }
 
 # 项目路径配置
 try:
-    PROJECT_ROOT = Path(__file__).resolve().parent
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
 except NameError:  # 处理 __file__ 不存在的情况
     PROJECT_ROOT = Path.cwd()
 

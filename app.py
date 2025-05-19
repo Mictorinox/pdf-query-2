@@ -1,4 +1,4 @@
-# 运行：streamlit run app.py --server.fileWatcherType none
+# 运行：streamlit run app.py --server.fileWatcherType none --server.address 0.0.0.0 --server.port 8501
 # 不然会报错 RuntimeError: Tried to instantiate class '__path__._path', but it does not exist! Ensure that it is registered via torch::class_
 
 import streamlit as st
@@ -9,7 +9,9 @@ from pathlib import Path # Import Path
 
 from utils.file_utils import load_document
 from utils.vector_utils import split_documents, get_embedding_function
-from knowledge_base.kb_manager import create_kb, list_kbs, get_kb_path, add_documents_to_kb # DEFAULT_KB_ROOT_DIR is no longer used from here
+from knowledge_base.kb_manager import create_kb, list_kbs, get_kb_path, add_documents_to_kb, load_kb # 
+from chains.qa_chain import get_llm, create_qa_chain, DEFAULT_PROMPT_TEMPLATE 
+from retrievers.default_retriever import DefaultSimilarityRetriever 
 # Import new config variables
 from configs import (
     CHROMA_DB_PATH,
@@ -35,15 +37,9 @@ if "messages" not in st.session_state: # 用于聊天记录
     st.session_state.messages = []
 if "current_kb_name" not in st.session_state:
     st.session_state.current_kb_name = None
-if "embedding_function" not in st.session_state:
-    # 初始化嵌入函数，避免重复加载
-    # Using EMBEDDING_MODEL["local_path"] as the model_name for SentenceTransformerEmbeddings
-    # Assuming EMBEDDING_MODEL["local_path"] is a valid path or model identifier
-    # The 'device' will use the default 'cpu' from get_embedding_function if not specified here
-    with st.spinner(f"正在加载嵌入模型 ({EMBEDDING_MODEL.get('model_name', EMBEDDING_MODEL.get('local_path'))})... 这可能需要一些时间。"):
-        st.session_state.embedding_function = get_embedding_function(
-            model_name=EMBEDDING_MODEL["local_path"] # Or EMBEDDING_MODEL["model_name"] if that's preferred
-        )
+# REMOVE embedding_function initialization from here
+# REMOVE llm initialization from here
+
 
 # --- 确保必要的目录存在 ---
 if not CHROMA_DB_PATH.exists():
@@ -195,7 +191,7 @@ with st.sidebar:
         st.session_state.current_kb_name = None
     else:
         if st.session_state.current_kb_name not in available_kbs:
-            st.session_state.current_kb_name = None
+            st.session_state.current_kb_name = None # 重置为 None 如果当前选择的KB不存在了
 
         current_kb_index = 0
         if st.session_state.current_kb_name and st.session_state.current_kb_name in available_kbs:
@@ -205,44 +201,114 @@ with st.sidebar:
             "选择一个知识库:",
             options=available_kbs,
             index=current_kb_index,
-            key="kb_selector",
-            on_change=lambda: setattr(st.session_state, 'current_kb_name', st.session_state.kb_selector)
+            key="selected_kb_dropdown",
+            on_change=lambda: setattr(st.session_state, 'current_kb_name', st.session_state.selected_kb_dropdown) # 更新 current_kb_name
         )
-        if selected_kb and selected_kb != st.session_state.current_kb_name :
-            st.session_state.current_kb_name = selected_kb
-            st.session_state.messages = [] 
-            st.rerun()
 
-    if st.session_state.current_kb_name:
-        st.success(f"当前操作的知识库: **{st.session_state.current_kb_name}**")
-    else:
-        st.warning("未选择知识库。问答功能将作为通用聊天机器人。")
+        if selected_kb and selected_kb != st.session_state.current_kb_name: # 处理手动选择的情况
+             st.session_state.current_kb_name = selected_kb
+             st.session_state.messages = [] # 切换知识库时清空聊天记录
+             st.rerun()
 
-# --- 主聊天界面 ---
-st.header("💬 开始提问")
 
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-if prompt := st.chat_input("请输入您的问题..."):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-    with st.chat_message("assistant"):
-        response_placeholder = st.empty()
-        full_response = ""
         if st.session_state.current_kb_name:
-            full_response = f"（模拟回答）您选择了知识库 '{st.session_state.current_kb_name}'。关于 '{prompt}' 的答案正在生成中..."
-            response_placeholder.markdown(full_response + "▌") 
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
-            response_placeholder.markdown(full_response)
+            st.success(f"当前选定知识库: **{st.session_state.current_kb_name}**")
         else:
-            full_response = f"（模拟通用聊天）您没有选择知识库。关于 '{prompt}' 的回复正在生成中..."
-            response_placeholder.markdown(full_response + "▌")
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
-            response_placeholder.markdown(full_response)
+            st.info("请选择一个知识库以开始问答。")
+
+# --- 初始化核心组件（移到UI渲染后） ---
+# 初始化嵌入函数
+if "embedding_function" not in st.session_state:
+    st.info(f"正在加载嵌入模型 ({EMBEDDING_MODEL.get('model_name', EMBEDDING_MODEL.get('local_path'))})... 这可能需要一些时间。")
+    try:
+        st.session_state.embedding_function = get_embedding_function(
+            model_name=EMBEDDING_MODEL["local_path"]
+        )
+        st.success(f"嵌入模型 ({EMBEDDING_MODEL.get('model_name', EMBEDDING_MODEL.get('local_path'))}) 加载完成!")
+    except Exception as e:
+        st.error(f"嵌入模型加载失败: {e}")
+        st.session_state.embedding_function = None
+
+# 初始化 LLM
+if "llm" not in st.session_state:
+    st.info("正在初始化语言模型...")
+    try:
+        st.session_state.llm = get_llm(provider="glm")
+        st.success("语言模型初始化完成!")
+    except Exception as e:
+        st.error(f"初始化语言模型失败: {e}")
+        st.session_state.llm = None
+
+# --- 主界面：聊天和问答 ---
+st.header("开始问答")
+
+if not st.session_state.current_kb_name:
+    st.warning("请先在侧边栏选择或创建一个知识库。")
+elif not st.session_state.llm:
+    st.error("语言模型未能成功初始化，无法进行问答。请检查配置和API密钥。")
+else:
+    # 显示聊天记录
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    # 用户输入
+    if prompt := st.chat_input(f"针对 '{st.session_state.current_kb_name}' 提问..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        with st.chat_message("assistant"):
+            message_placeholder = st.empty()
+            full_response_content = ""
+            try:
+                with st.spinner("思考中..."):
+                    # 1. 加载选定的知识库向量存储
+                    embedding_func = st.session_state.embedding_function
+                    vector_store = load_kb(
+                        kb_name=st.session_state.current_kb_name,
+                        embedding_function=embedding_func,
+                        kb_root_dir=str(CHROMA_DB_PATH)
+                    )
+                    if not vector_store:
+                        raise ValueError(f"无法加载知识库 '{st.session_state.current_kb_name}'。")
+
+                    # 2. 初始化检索器
+                    retriever = DefaultSimilarityRetriever(
+                        vector_store=vector_store,
+                        search_kwargs={'k': DOCUMENT_PROCESSING.get("retrieval_k", 4)} # 可配置检索数量
+                    ).as_langchain_retriever()
+
+
+                    # 3. 创建问答链
+                    qa_chain = create_qa_chain(
+                        llm=st.session_state.llm,
+                        retriever=retriever,
+                        prompt_template_str=DEFAULT_PROMPT_TEMPLATE # 使用 chains 模块中定义的模板
+                    )
+
+                    # 4. 获取答案
+                    response = qa_chain({"query": prompt})
+                    answer = response.get("result", "抱歉，我无法回答这个问题。")
+                    source_documents = response.get("source_documents", [])
+
+                    full_response_content += answer
+                    if source_documents:
+                        full_response_content += "\n\n--- 参考文档 ---"
+                        for i, doc in enumerate(source_documents):
+                            # 为了简洁，只显示部分内容和来源
+                            source_info = doc.metadata.get('source', '未知来源')
+                            page_info = doc.metadata.get('page', '')
+                            preview = doc.page_content[:100] + "..." if len(doc.page_content) > 100 else doc.page_content
+                            full_response_content += f"\n\n**片段 {i+1} (来自: {source_info}{f', 第 {page_info+1} 页' if isinstance(page_info, int) else ''}):**\n{preview}"
+                    
+                    message_placeholder.markdown(full_response_content)
+
+            except Exception as e:
+                full_response_content = f"处理您的问题时发生错误: {e}"
+                st.error(full_response_content)
+            
+            st.session_state.messages.append({"role": "assistant", "content": full_response_content})
 
 # --- 简单的页脚 ---
 st.markdown("---")
