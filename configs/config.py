@@ -10,6 +10,12 @@ API_CONFIG = {
         "llm_provider_type": "zhipuai",
         "temperature": 0.1
     },
+    "ollama": { # 新增 Ollama 配置
+        "api_base": "http://localhost:11434", # Ollama 默认 API 地址
+        "llm_model_name": "qwen3:4b",           # 模型列表在 http://localhost:11434/api/tags
+        "llm_provider_type": "ollama",
+        "temperature": 0.7                    # Ollama 模型的温度参数
+    }
     # 未来可以添加更多提供商的配置
 }
 

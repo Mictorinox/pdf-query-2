@@ -2,6 +2,8 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import SentenceTransformerEmbeddings
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.schema import Document
+from torch.cuda import is_available as cuda_is_available
+
 
 def split_documents(documents: list[Document], chunk_size: int = 1000, chunk_overlap: int = 200) -> list[Document]:
     """
@@ -41,6 +43,7 @@ def get_embedding_function(model_name: str = 'all-MiniLM-L6-v2', device: str = '
     """
     # 注意：如果使用 'mps' (Apple Silicon GPU)，请确保 PyTorch 版本支持
     # 对于 'mps'，可能需要 `PYTORCH_ENABLE_MPS_FALLBACK=1` 环境变量
+    device = "cuda" if cuda_is_available() else "cpu"
     model_kwargs = {'device': device}
     # 如果模型在本地，HuggingFaceEmbeddings 会自动处理
     # 如果模型需要从 Hugging Face Hub 下载，它也会处理

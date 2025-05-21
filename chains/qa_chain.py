@@ -1,4 +1,5 @@
 from langchain_community.chat_models import ChatZhipuAI
+from langchain_community.chat_models.ollama import ChatOllama # 导入 ChatOllama
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
 from configs import API_CONFIG # 假设 API_CONFIG 在 configs 包的 __init__.py 中可导入
@@ -7,20 +8,37 @@ import os
 def get_llm(provider: str = "glm"):
     """
     根据配置初始化并返回一个 LLM 实例。
-    目前仅支持 GLM (ZhipuAI)。
+    支持 GLM (ZhipuAI) 和 Ollama。
     """
     if provider in API_CONFIG.keys():
-        api_key = os.getenv(API_CONFIG[provider].get("api_key_env_var")) # 实际应从环境变量读取
-        # Langchain 的 ChatZhipuAI 默认从环境变量 ZHUPUAI_API_KEY 读取
-        # os.environ["ZHIPUAI_API_KEY"] = "YOUR_API_KEY" # 如果需要设置环境变量
-        llm = ChatZhipuAI(
-            model=API_CONFIG[provider]["llm_model_name"],
-            api_key=api_key, # 如果需要显式传递
-            temperature=API_CONFIG[provider]["temperature"] # 可以调整温度参数
-        )
-        return llm
+        config = API_CONFIG[provider]
+        llm = None # 初始化 llm 变量
+        if provider == "glm":
+            api_key = os.getenv(config.get("api_key_env_var"))
+            llm = ChatZhipuAI(
+                model=config["llm_model_name"],
+                api_key=api_key, 
+                temperature=config["temperature"]
+            )
+        elif provider == "ollama": # 新增对 Ollama 的处理
+            llm = ChatOllama(
+                base_url=config.get("api_base", "http://localhost:11434"), # 使用配置或默认的 base_url
+                model=config["llm_model_name"], # 使用配置的模型名称
+                temperature=config.get("temperature", 0.7) # 使用配置或默认的温度
+            )
+            # 您可以根据需要为 Ollama 添加更多参数，例如 num_ctx, top_k, top_p 等
+            # 这些参数可以添加到 API_CONFIG["ollama"] 中，并在此处读取
+        # else:
+            # 如果未来添加了更多在 API_CONFIG 中配置但在 get_llm 中未实现逻辑的提供商，可以在此抛出错误
+            # raise ValueError(f"LLM provider '{provider}' logic not implemented in get_llm, though configured.")
+        
+        if llm is not None:
+            return llm
+        else:
+            # 如果 provider 在 API_CONFIG 中，但上面所有 if/elif 都没有匹配（理论上不应该发生如果配置正确）
+            raise ValueError(f"无法为提供商 '{provider}' 初始化 LLM 实例。请检查 chains/qa_chain.py 中的 get_llm 函数。")
     else:
-        raise ValueError(f"未配置的 LLM 提供商: {provider}")
+        raise ValueError(f"未配置的 LLM 提供商: {provider}。请检查 configs/config.py 中的 API_CONFIG。")
 
 def create_qa_chain(llm, retriever, prompt_template_str: str = None):
     """

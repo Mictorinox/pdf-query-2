@@ -19,8 +19,8 @@ from configs import (
     EMBEDDING_MODEL,
     DOCUMENT_PROCESSING,
     SUPPORTED_FILE_TYPES,
-    UI_CONFIG
-    # API_CONFIG will be used later
+    UI_CONFIG,
+    API_CONFIG
 )
 
 # --- 应用配置 ---
@@ -37,8 +37,13 @@ if "messages" not in st.session_state: # 用于聊天记录
     st.session_state.messages = []
 if "current_kb_name" not in st.session_state:
     st.session_state.current_kb_name = None
-# REMOVE embedding_function initialization from here
-# REMOVE llm initialization from here
+if "embedding_function" not in st.session_state: # 确保嵌入模型状态存在
+    st.session_state.embedding_function = None
+if "selected_llm_provider" not in st.session_state: # 新增：选择的LLM提供商
+    # 尝试从 API_CONFIG 获取第一个作为默认值，否则为 None
+    st.session_state.selected_llm_provider = list(API_CONFIG.keys())[0] if API_CONFIG else None
+if "llm" not in st.session_state: # 新增：LLM实例
+    st.session_state.llm = None
 
 
 # --- 确保必要的目录存在 ---
@@ -62,13 +67,98 @@ def generate_kb_name_from_file(uploaded_file):
         return f"{safe_name}_kb"
     return None
 
+def _cleanup_uploaded_file(): 
+    """辅助函数,清理临时上传文件"""
+    if st.session_state.get("uploaded_file_path"):
+        file_path_to_clean = Path(st.session_state.uploaded_file_path)
+        if file_path_to_clean.exists():
+            try:
+                file_path_to_clean.unlink()
+            except Exception as e:
+                st.warning(f"清理临时文件 {file_path_to_clean} 失败: {e}")
+        st.session_state.uploaded_file_path = None
+
+# --- 模型初始化函数 ---
+def initialize_embedding_model():
+    """初始化或获取嵌入模型实例"""
+    if st.session_state.embedding_function is None:
+        try:
+            # 使用主界面来显示状态
+            with st.status("正在加载嵌入模型...", expanded=False) as status_bar:
+                st.session_state.embedding_function = get_embedding_function(
+                    model_name=EMBEDDING_MODEL.get("local_path") or EMBEDDING_MODEL.get("model_name")
+                )
+                status_bar.update(label="嵌入模型加载成功！", state="complete")
+        except Exception as e:
+            st.sidebar.error(f"加载嵌入模型失败: {e}")
+            st.session_state.embedding_function = None
+    return st.session_state.embedding_function
+
+def initialize_llm():
+    """根据选择的提供商初始化或获取LLM实例"""
+    if st.session_state.llm is None and st.session_state.selected_llm_provider:
+        try:
+            with st.sidebar.status(f"正在初始化语言模型 ({st.session_state.selected_llm_provider})...", expanded=False) as status_bar:
+                st.session_state.llm = get_llm(provider=st.session_state.selected_llm_provider)
+                status_bar.update(label=f"语言模型 ({st.session_state.selected_llm_provider}) 初始化成功！", state="complete")
+        except Exception as e:
+            st.sidebar.error(f"初始化语言模型 ({st.session_state.selected_llm_provider}) 失败: {e}")
+            st.session_state.llm = None
+    elif not st.session_state.selected_llm_provider and "llm" in st.session_state : # 如果没有选择provider，llm应为None
+        st.session_state.llm = None
+    return st.session_state.llm
+
+# --- 应用启动时初始化模型 ---
+# initialize_embedding_model() # 嵌入模型初始化放在界面初始化之后
+# initialize_llm() # LLM 初始化将由选择器触发或在首次需要时进行
+
 # --- UI 界面 ---
 st.title(UI_CONFIG.get("page_title", "📚 拆书问答应用")) # Use UI_CONFIG for title
 st.caption("上传书籍，创建知识库，然后开始提问吧！")
 
 # --- 侧边栏：知识库管理 ---
 with st.sidebar:
-    st.header("知识库管理")
+    st.header("⚙️ 模型配置") # 新增模型配置区域
+
+    available_llm_providers = list(API_CONFIG.keys())
+    
+    # 确保 selected_llm_provider 有效
+    if not st.session_state.selected_llm_provider and available_llm_providers:
+        st.session_state.selected_llm_provider = available_llm_providers[0]
+    elif st.session_state.selected_llm_provider not in available_llm_providers and available_llm_providers:
+         st.session_state.selected_llm_provider = available_llm_providers[0] # 重置为第一个有效的
+         st.session_state.llm = None # 清空旧的LLM实例
+    elif not available_llm_providers:
+        st.session_state.selected_llm_provider = None
+        st.session_state.llm = None
+
+
+    if available_llm_providers:
+        current_provider_index = 0
+        if st.session_state.selected_llm_provider in available_llm_providers:
+            current_provider_index = available_llm_providers.index(st.session_state.selected_llm_provider)
+
+        selected_provider = st.selectbox(
+            "选择语言模型 (LLM):",
+            options=available_llm_providers,
+            index=current_provider_index,
+            key="llm_provider_selector"
+        )
+        if selected_provider != st.session_state.selected_llm_provider:
+            st.session_state.selected_llm_provider = selected_provider
+            st.session_state.llm = None # 重置LLM，将在下次使用时重新初始化
+            st.session_state.messages = [] # （可选）切换模型时清空聊天记录
+            st.rerun() # 重新运行以应用更改
+    else:
+        st.warning("没有配置可用的语言模型。请检查 `configs/config.py`。")
+
+    # 在这里调用 initialize_llm，确保选择器更改后能立即尝试初始化
+    # 或者在聊天逻辑中，如果 llm is None 再调用
+    initialize_llm()
+
+
+    st.divider()
+    st.header("📚 知识库管理")
 
     # 1. 创建新知识库
     st.subheader("上传新书创建知识库")
@@ -85,10 +175,13 @@ with st.sidebar:
 
     if uploaded_file is not None:
         if st.button("创建/添加到知识库", key="create_kb_button"):
+            embedding_func = initialize_embedding_model() # 确保嵌入模型已加载
+            if not embedding_func:
+                st.error("嵌入模型未能加载，无法处理知识库。")
+                st.stop()
+            
             # 将上传的文件保存到配置的临时目录
-            # Generate a unique filename to avoid collisions in TEMP_UPLOADS_DIR
-            unique_filename = f"{datetime.now().strftime('%Y%m%d%H%M%S%f')}_{uploaded_file.name}"
-            temp_file_save_path = TEMP_UPLOADS_DIR / unique_filename
+            temp_file_save_path = TEMP_UPLOADS_DIR / uploaded_file.name
             
             try:
                 with open(temp_file_save_path, "wb") as tmp_f:
@@ -106,9 +199,7 @@ with st.sidebar:
                         raw_docs = load_document(st.session_state.uploaded_file_path)
                         if not raw_docs:
                             st.error("未能从文件中加载任何内容。请检查文件是否为空或格式正确。")
-                            if Path(st.session_state.uploaded_file_path).exists():
-                                Path(st.session_state.uploaded_file_path).unlink()
-                            st.session_state.uploaded_file_path = None
+                            _cleanup_uploaded_file() # 使用辅助函数清理
                             st.stop()
 
                         # 2. 切分文档 - Use DOCUMENT_PROCESSING config
@@ -120,9 +211,7 @@ with st.sidebar:
                         )
                         if not split_docs:
                             st.error("文档切分失败，没有生成任何文本块。")
-                            if Path(st.session_state.uploaded_file_path).exists():
-                                Path(st.session_state.uploaded_file_path).unlink()
-                            st.session_state.uploaded_file_path = None
+                            _cleanup_uploaded_file() # 使用辅助函数清理
                             st.stop()
                         st.write(f"文档被切分为 {len(split_docs)} 个片段。")
 
@@ -130,9 +219,7 @@ with st.sidebar:
                         kb_name_to_use = custom_kb_name_input.strip() or generate_kb_name_from_file(uploaded_file)
                         if not kb_name_to_use:
                             st.error("无法确定知识库名称。")
-                            if Path(st.session_state.uploaded_file_path).exists():
-                                Path(st.session_state.uploaded_file_path).unlink()
-                            st.session_state.uploaded_file_path = None
+                            _cleanup_uploaded_file() # 使用辅助函数清理
                             st.stop()
                         
                         st.info(f"步骤 3/4: 准备为知识库 '{kb_name_to_use}' 添加内容...")
@@ -147,8 +234,8 @@ with st.sidebar:
                             vector_store = add_documents_to_kb(
                                 kb_name=kb_name_to_use,
                                 docs=split_docs,
-                                embedding_function=embedding_func,
-                                kb_root_dir=str(CHROMA_DB_PATH) # Pass configured path
+                                embedding_function=embedding_func, # 使用已初始化的 embedding_func
+                                kb_root_dir=str(CHROMA_DB_PATH) 
                             )
                             if vector_store:
                                 st.success(f"成功将 '{uploaded_file.name}' 的内容添加到现有知识库 '{kb_name_to_use}'！")
@@ -158,9 +245,9 @@ with st.sidebar:
                             st.info(f"正在创建新知识库 '{kb_name_to_use}'...")
                             vector_store = create_kb(
                                 docs=split_docs,
-                                embedding_function=embedding_func,
+                                embedding_function=embedding_func, # 使用已初始化的 embedding_func
                                 kb_name=kb_name_to_use,
-                                kb_root_dir=str(CHROMA_DB_PATH), # Pass configured path
+                                kb_root_dir=str(CHROMA_DB_PATH), 
                                 overwrite=False 
                             )
                             if vector_store:
@@ -175,15 +262,13 @@ with st.sidebar:
                         st.error(f"处理文件并创建/更新知识库时发生错误: {e}")
                     finally:
                         # 清理临时文件
-                        if st.session_state.uploaded_file_path and Path(st.session_state.uploaded_file_path).exists():
-                            Path(st.session_state.uploaded_file_path).unlink() # Use Path.unlink()
-                            st.session_state.uploaded_file_path = None
+                        _cleanup_uploaded_file() # 使用辅助函数清理
                         # Streamlit handles uploader reset automatically on rerun or new upload
 
     st.divider()
 
     # 2. 选择现有知识库
-    st.subheader("选择知识库进行问答")
+    st.subheader("选择知识库进行提问")
     available_kbs = get_available_kbs()
     
     if not available_kbs:
@@ -214,38 +299,16 @@ with st.sidebar:
         if st.session_state.current_kb_name:
             st.success(f"当前选定知识库: **{st.session_state.current_kb_name}**")
         else:
-            st.info("请选择一个知识库以开始问答。")
-
+            st.info("请选择一个知识库以开始提问。")
 # --- 初始化核心组件（移到UI渲染后） ---
-# 初始化嵌入函数
-if "embedding_function" not in st.session_state:
-    st.info(f"正在加载嵌入模型 ({EMBEDDING_MODEL.get('model_name', EMBEDDING_MODEL.get('local_path'))})... 这可能需要一些时间。")
-    try:
-        st.session_state.embedding_function = get_embedding_function(
-            model_name=EMBEDDING_MODEL["local_path"]
-        )
-        st.success(f"嵌入模型 ({EMBEDDING_MODEL.get('model_name', EMBEDDING_MODEL.get('local_path'))}) 加载完成!")
-    except Exception as e:
-        st.error(f"嵌入模型加载失败: {e}")
-        st.session_state.embedding_function = None
-
-# 初始化 LLM
-if "llm" not in st.session_state:
-    st.info("正在初始化语言模型...")
-    try:
-        st.session_state.llm = get_llm(provider="glm")
-        st.success("语言模型初始化完成!")
-    except Exception as e:
-        st.error(f"初始化语言模型失败: {e}")
-        st.session_state.llm = None
-
+initialize_embedding_model()
 # --- 主界面：聊天和问答 ---
-st.header("开始问答")
+st.header("开始提问")
 
 if not st.session_state.current_kb_name:
     st.warning("请先在侧边栏选择或创建一个知识库。")
 elif not st.session_state.llm:
-    st.error("语言模型未能成功初始化，无法进行问答。请检查配置和API密钥。")
+    st.error("语言模型未能成功初始化，无法进行提问。请检查配置和API密钥。")
 else:
     # 显示聊天记录
     for message in st.session_state.messages:
