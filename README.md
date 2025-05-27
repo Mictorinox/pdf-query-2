@@ -1,8 +1,12 @@
 # PDF 智能问答助手
 
+![image](https://github.com/user-attachments/assets/fac02a5d-2169-407d-bd7a-a3902ff70f93)
+
 ## 项目概述
 
 本项目是一个轻量化的本地知识库构建工具，允许用户上传 PDF 或 TXT 文档构建本地知识库，并针对知识库中的内容进行提问。应用前端使用 Streamlit 构建，后端利用 Langchain 进行文档处理、向量化、检索和问答链的构建。
+
+
 
 ## 项目结构
 
@@ -51,12 +55,9 @@ pip install -r requirements.txt
 
 ### 启动应用
 
-运行指令
+运行启动指令，此处需要指定 `--server.fileWatcherType none` 参数，避免报错。
 ```sh
 streamlit run app.py --server.fileWatcherType none --server.address localhost --server.port 8501
 ```
-此处需要指定 `--server.fileWatcherType none` 参数，避免报错
 
-### 程序界面
-
-启动后可以使用浏览器`localhost:8501`打开程序界面
+启动后可以使用浏览器访问`localhost:8501`打开程序界面
