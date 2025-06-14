@@ -1,6 +1,6 @@
 # PDF 智能问答助手
 
-![image](https://github.com/user-attachments/assets/fac02a5d-2169-407d-bd7a-a3902ff70f93)
+![image](https://github.com/user-attachments/assets/a33d0352-6b78-446c-8cd4-02a95541faae)
 
 ## 项目概述
 
