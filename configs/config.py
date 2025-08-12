@@ -31,9 +31,13 @@ TEMP_UPLOADS_DIR = PROJECT_ROOT / "temp_uploads"
 
 # 模型配置
 EMBEDDING_MODEL = {
-    "local_path": "D:\\0-source\\models\\paraphrase-multilingual-MiniLM-L12-v2",
-    "model_name": "paraphrase-multilingual-MiniLM-L12-v2"
+    "local_path": "D:\\0-source\\models\\bge-m3",
+    "model_name": "bge-m3"
 }
+# EMBEDDING_MODEL = {
+#     "local_path": "D:\\0-source\\models\\paraphrase-multilingual-MiniLM-L12-v2",
+#     "model_name": "paraphrase-multilingual-MiniLM-L12-v2"
+# }
 
 # 文档处理配置
 DOCUMENT_PROCESSING = {
